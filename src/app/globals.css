@@ -1,0 +1,472 @@
+@import "tailwindcss";
+
+:root {
+  --background: #05060b;
+  --foreground: #f6f2ea;
+  --muted: #a4a9b6;
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --surface-border-strong: rgba(255, 90, 54, 0.28);
+  --accent: #ff5a36;
+  --accent-cool: #7af5ff;
+  --accent-gold: #ffcf5a;
+  --grid: rgba(255, 255, 255, 0.045);
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 80% 40% at top left, rgba(255, 90, 54, 0.14), transparent),
+    radial-gradient(ellipse 60% 30% at top right, rgba(122, 245, 255, 0.10), transparent),
+    linear-gradient(180deg, #08090f 0%, #05060b 40%, #020308 100%);
+  color: var(--foreground);
+  font-family: var(--font-body), sans-serif;
+}
+
+/* Fine grid overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 60%);
+  opacity: 0.8;
+  z-index: -2;
+}
+
+/* Dot texture */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(255, 255, 255, 0.1) 1px,
+    transparent 0
+  );
+  background-size: 20px 20px;
+  opacity: 0.04;
+  z-index: -1;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(255, 90, 54, 0.35);
+  color: #fff;
+}
+
+/* ─── Typography ─────────────────────────────────────────── */
+
+.display-font {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.telemetry-kicker {
+  font-family: var(--font-mono), monospace;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ─── Panel base ─────────────────────────────────────────── */
+
+.panel {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.065),
+    rgba(255, 255, 255, 0.02)
+  );
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--surface-border);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 24px 80px var(--shadow);
+}
+
+.panel-strong {
+  background: linear-gradient(
+    170deg,
+    rgba(20, 22, 32, 0.97),
+    rgba(8, 10, 18, 0.95)
+  );
+  border: 1px solid var(--surface-border-strong);
+  box-shadow:
+    0 1px 0 rgba(255, 90, 54, 0.12) inset,
+    0 40px 120px rgba(0, 0, 0, 0.6);
+}
+
+/* Panel variant with accent glow */
+.panel-hot {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 90, 54, 0.08),
+    rgba(255, 255, 255, 0.02)
+  );
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255, 90, 54, 0.2);
+  box-shadow:
+    0 0 40px rgba(255, 90, 54, 0.08),
+    0 24px 80px var(--shadow);
+}
+
+/* Panel variant with cool/cyan glow */
+.panel-cool {
+  background: linear-gradient(
+    160deg,
+    rgba(122, 245, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  );
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(122, 245, 255, 0.16);
+  box-shadow:
+    0 0 40px rgba(122, 245, 255, 0.06),
+    0 24px 80px var(--shadow);
+}
+
+/* ─── Interactive components ────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.chip:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.select-shell {
+  width: 100%;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(6, 7, 12, 0.9);
+  color: var(--foreground);
+  padding: 0.85rem 1rem;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s;
+}
+
+.select-shell:focus {
+  border-color: rgba(255, 90, 54, 0.4);
+}
+
+.audio-shell {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* ─── Status badges ──────────────────────────────────────── */
+
+.badge-live {
+  background: rgba(122, 245, 255, 0.15);
+  color: var(--accent-cool);
+  border: 1px solid rgba(122, 245, 255, 0.25);
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+.badge-done {
+  background: rgba(255, 90, 54, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(255, 90, 54, 0.2);
+}
+
+.badge-upcoming {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.badge-cancelled {
+  background: rgba(255, 80, 80, 0.08);
+  color: rgba(255, 120, 120, 0.7);
+  border: 1px solid rgba(255, 80, 80, 0.15);
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ─── Tyre compound badges ───────────────────────────────── */
+
+.tyre {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono), monospace;
+}
+
+.tyre-soft {
+  background: rgba(255, 85, 85, 0.16);
+  color: #ff9090;
+  border: 1px solid rgba(255, 85, 85, 0.3);
+}
+
+.tyre-medium {
+  background: rgba(255, 216, 77, 0.15);
+  color: #ffd84d;
+  border: 1px solid rgba(255, 216, 77, 0.3);
+}
+
+.tyre-hard {
+  background: rgba(230, 230, 230, 0.1);
+  color: #e0e0e0;
+  border: 1px solid rgba(230, 230, 230, 0.2);
+}
+
+.tyre-inter {
+  background: rgba(74, 227, 143, 0.14);
+  color: #4ae38f;
+  border: 1px solid rgba(74, 227, 143, 0.28);
+}
+
+.tyre-wet {
+  background: rgba(74, 167, 255, 0.14);
+  color: #4aa7ff;
+  border: 1px solid rgba(74, 167, 255, 0.28);
+}
+
+/* ─── Speed stripe decoration ────────────────────────────── */
+
+.speed-stripe {
+  background-image: repeating-linear-gradient(
+    -52deg,
+    transparent,
+    transparent 10px,
+    rgba(255, 90, 54, 0.035) 10px,
+    rgba(255, 90, 54, 0.035) 12px
+  );
+}
+
+/* ─── Accent top border on cards ─────────────────────────── */
+
+.accent-bar-top {
+  position: relative;
+}
+
+.accent-bar-top::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.accent-bar-top-cool::before {
+  background: linear-gradient(90deg, var(--accent-cool), transparent);
+}
+
+.accent-bar-top-gold::before {
+  background: linear-gradient(90deg, var(--accent-gold), transparent);
+}
+
+/* ─── Glow effects ───────────────────────────────────────── */
+
+.glow-red {
+  text-shadow: 0 0 24px rgba(255, 90, 54, 0.55);
+}
+
+.glow-cyan {
+  text-shadow: 0 0 24px rgba(122, 245, 255, 0.5);
+}
+
+.glow-gold {
+  text-shadow: 0 0 24px rgba(255, 207, 90, 0.5);
+}
+
+/* ─── Data rows (result tables) ──────────────────────────── */
+
+.result-row {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr 2.75rem 2.75rem 5.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.7rem 1rem;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.result-row-home {
+  grid-template-columns: 2.5rem 1fr 2.75rem 2.75rem 4.5rem;
+}
+
+.result-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Colored left accent bar via inline style --team-color variable */
+.result-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10%;
+  height: 80%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--team-color, rgba(255, 90, 54, 0.6));
+}
+
+/* ─── Progress bars ──────────────────────────────────────── */
+
+.progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  position: relative;
+}
+
+.progress-fill::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  filter: blur(4px);
+  border-radius: 999px;
+}
+
+/* ─── Nav header ─────────────────────────────────────────── */
+
+.nav-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(5, 6, 11, 0.88);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+
+.nav-accent-line {
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent) 0%, rgba(122, 245, 255, 0.6) 40%, transparent 70%);
+}
+
+/* ─── Chart containers ───────────────────────────────────── */
+
+.chart-container {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 16px;
+  padding: 4px;
+}
+
+/* Recharts overrides */
+.recharts-cartesian-axis-tick text {
+  fill: rgba(255, 255, 255, 0.3) !important;
+  font-size: 10px !important;
+  font-family: var(--font-mono), monospace !important;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+
+/* ─── Season Map ─────────────────────────────────────────── */
+
+.season-map-wrap {
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 50%, rgba(255,90,54,0.04), transparent 70%),
+    rgba(5,6,11,0.55);
+}
+
+.season-map-svg {
+  display: block;
+}
+
+.season-marker {
+  transition: transform 0.2s;
+}
+
+.season-map-tooltip {
+  animation: tooltip-in 0.15s ease-out;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.season-route-line {
+  animation: dash-scroll 20s linear infinite;
+}
+
+@keyframes dash-scroll {
+  to { stroke-dashoffset: -100; }
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
