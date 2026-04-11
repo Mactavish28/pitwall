@@ -611,17 +611,17 @@ async function resolveSeasonData(preferredYear = new Date().getUTCFullYear()) {
     new Set([preferredYear, preferredYear - 1, 2026, 2025, 2024, 2023]),
   ).filter((year) => year >= MIN_F1_YEAR);
 
-  const sessionsPerYear = await Promise.all(
-    candidateYears.map((year) =>
-      fetchOpenF1<Session>(
+  // One sessions request at a time: parallel year discovery bursts OpenF1 (429) and
+  // this path does not use allowFailure, so the homepage would 500.
+  for (const year of candidateYears) {
+    const races = sortByDateStart(
+      await fetchOpenF1<Session>(
         "sessions",
         { year, session_name: "Race" },
         { revalidate: 60 * 60 * 6, tags: [`season-${year}`] },
-      ).then((rows) => ({ year, races: sortByDateStart(rows) })),
-    ),
-  );
+      ),
+    );
 
-  for (const { year, races } of sessionsPerYear) {
     if (races.length === 0) {
       continue;
     }
