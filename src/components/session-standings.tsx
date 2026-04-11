@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { Session } from "@/lib/openf1";
 import { formatUtcDateTime } from "@/lib/format";
+import { InlineLoader } from "@/components/inline-loader";
 import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
 
 type SessionResult = {
@@ -27,15 +28,17 @@ export function SessionStandings({ session, isRace }: SessionStandingsProps) {
   const [expanded, setExpanded] = useState(false);
   const [results, setResults] = useState<Array<{ name: string; color: string }> | null>(null);
   const [loading, setLoading] = useState(false);
+  const loadInFlightRef = useRef(false);
 
   const canExpand = ["Practice 1", "Practice 2", "Practice 3", "Practice 4", "Qualifying", "Sprint Qualifying", "Sprint"].includes(session.session_name);
 
   const loadResults = useCallback(async () => {
-    if (results) {
-      setExpanded(!expanded);
+    if (results !== null) {
+      setExpanded((e) => !e);
       return;
     }
-
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     setLoading(true);
     setExpanded(true);
 
@@ -70,13 +73,14 @@ export function SessionStandings({ session, isRace }: SessionStandingsProps) {
     } catch {
       setResults([]);
     } finally {
+      loadInFlightRef.current = false;
       setLoading(false);
     }
-  }, [results, expanded, session.session_key]);
+  }, [results, session.session_key]);
 
   return (
     <div
-      className={`rounded-[20px] px-4 py-3 transition-all ${canExpand ? "cursor-pointer" : ""}`}
+      className={`rounded-[20px] px-4 py-3 transition-all ${canExpand ? "cursor-pointer" : ""} ${canExpand && loading && !results ? "pointer-events-none cursor-wait opacity-85" : ""}`}
       style={{
         border: isRace ? "1px solid rgba(255,90,54,0.25)" : "1px solid rgba(255,255,255,0.07)",
         background: isRace ? "rgba(255,90,54,0.08)" : "rgba(255,255,255,0.03)",
@@ -94,7 +98,7 @@ export function SessionStandings({ session, isRace }: SessionStandingsProps) {
       {expanded && (
         <div className="mt-3 space-y-1 border-t border-white/6 pt-3">
           {loading ? (
-            <p className="text-[10px] text-white/30">Loading...</p>
+            <InlineLoader label="Loading standings…" className="py-4" />
           ) : results && results.length > 0 ? (
             results.map((r, i) => (
               <div key={i} className="flex items-center gap-2">
