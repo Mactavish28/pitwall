@@ -29,6 +29,9 @@ function getOpenF1FreeTierLimits() {
 function shouldApplyOpenF1FreeRateLimit() {
   if (process.env.OPENF1_RATE_LIMIT_DISABLED === "1") return false;
   if (process.env.OPENF1_ACCESS_TOKEN?.trim()) return false;
+  // `next dev`: the homepage issues many OpenF1 calls; 30 RPM makes the first load hang for minutes.
+  // Production (`next build` / Vercel) uses NODE_ENV=production — limiter stays on.
+  if (process.env.NODE_ENV === "development") return false;
   return true;
 }
 

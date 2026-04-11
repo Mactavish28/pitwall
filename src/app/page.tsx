@@ -32,6 +32,9 @@ import {
 /** Vercel / OpenF1: homepage runs many upstream fetches — avoid 10s hobby timeout. */
 export const maxDuration = 60;
 
+/** Avoid static prerender at build time (many live OpenF1 calls + rate limits). */
+export const dynamic = "force-dynamic";
+
 function getAccent(teamColour?: string | null) {
   return teamColour ? `#${teamColour}` : "var(--accent)";
 }
