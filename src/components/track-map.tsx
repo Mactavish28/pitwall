@@ -45,13 +45,14 @@ function normalize(samples: LocationSample[]): { nx: number; ny: number }[] {
 }
 
 function buildApiUrl(sessionKey: number, driverNumber: number, dateStart: string, dateEnd: string) {
-  const q = new URLSearchParams({
-    session_key: String(sessionKey),
-    driver_number: String(driverNumber),
-    "date>=": dateStart,
-    "date<=": dateEnd,
-  });
-  return openF1ProxyUrl(`location?${q.toString()}`);
+  // Proxy uses `date_start` / `date_end` so Next.js URL parsing is stable; the route rewrites to OpenF1 `date>=` / `date<=`.
+  const qs = [
+    `session_key=${sessionKey}`,
+    `driver_number=${driverNumber}`,
+    `date_start=${encodeURIComponent(dateStart)}`,
+    `date_end=${encodeURIComponent(dateEnd)}`,
+  ].join("&");
+  return openF1ProxyUrl(`location?${qs}`);
 }
 
 export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }: TrackMapProps) {

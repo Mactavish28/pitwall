@@ -1,8 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 import { openF1UpstreamGet } from "@/lib/openf1-rate-limit";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * OpenF1 uses awkward query keys `date>=` / `date<=`. URL parsers (and searchParams.toString())
+ * break those, so the browser calls this proxy with `date_start` / `date_end` and we rewrite.
+ */
+function buildOpenF1ProxyPath(
+  endpoint: string,
+  sp: URLSearchParams,
+): string | null {
+  if (endpoint === "location" || endpoint === "car_data") {
+    const sessionKey = sp.get("session_key");
+    const driverNumber = sp.get("driver_number");
+    const dateStart = sp.get("date_start");
+    const dateEnd = sp.get("date_end");
+    if (!sessionKey || !driverNumber || !dateStart || !dateEnd) {
+      return null;
+    }
+    const q = [
+      `session_key=${encodeURIComponent(sessionKey)}`,
+      `driver_number=${encodeURIComponent(driverNumber)}`,
+      `date>=${encodeURIComponent(dateStart)}`,
+      `date<=${encodeURIComponent(dateEnd)}`,
+    ].join("&");
+    return `${endpoint}?${q}`;
+  }
+
+  const search = sp.toString();
+  return search ? `${endpoint}?${search}` : endpoint;
+}
 
 const ALLOWED_ENDPOINTS = new Set([
   "location",
@@ -28,8 +58,10 @@ export async function GET(
     return NextResponse.json({ error: "Unsupported OpenF1 endpoint" }, { status: 400 });
   }
 
-  const search = request.nextUrl.searchParams.toString();
-  const pathAndQuery = search ? `${endpoint}?${search}` : endpoint;
+  const pathAndQuery = buildOpenF1ProxyPath(endpoint, request.nextUrl.searchParams);
+  if (!pathAndQuery) {
+    return NextResponse.json({ error: "Invalid or incomplete query parameters" }, { status: 400 });
+  }
 
   const upstream = await openF1UpstreamGet(pathAndQuery);
   const contentType = upstream.headers.get("content-type") ?? "application/json";
