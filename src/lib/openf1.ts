@@ -4,6 +4,19 @@ const OPENF1_BASE_URL = "https://api.openf1.org/v1";
 const OPENF1_DEFAULT_REVALIDATE = 60 * 60;
 const MIN_F1_YEAR = 2023;
 
+/**
+ * OpenF1 does not publish numeric free-tier rate limits; unauthenticated traffic is
+ * throttled (often 429). Default to a small pool; authenticated users get higher limits
+ * per https://openf1.org/auth.html — set OPENF1_ACCESS_TOKEN (Bearer) on Vercel if needed.
+ * Tune parallelism with OPENF1_MAX_CONCURRENCY (integer 1–6, default 2).
+ */
+function getOpenF1MaxConcurrency() {
+  const raw = process.env.OPENF1_MAX_CONCURRENCY;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n) && n >= 1 && n <= 6) return n;
+  return 2;
+}
+
 type Primitive = string | number | boolean;
 type QueryValue = Primitive | Primitive[] | null | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -76,6 +89,14 @@ export interface SessionResult {
   meeting_key: number;
   position: number | null;
   session_key: number;
+}
+
+function sessionResultPosition(entry: SessionResult): number | null {
+  const p = entry.position;
+  if (p == null) return null;
+  if (typeof p === "number" && Number.isFinite(p)) return p;
+  const n = Number(p);
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface StartingGridEntry {
@@ -377,11 +398,17 @@ async function fetchOpenF1<T>(
   options: CacheOptions = {},
   attempt = 0,
 ) {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": OPENF1_USER_AGENT,
+  };
+  const token = process.env.OPENF1_ACCESS_TOKEN?.trim();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(buildUrl(endpoint, params), {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": OPENF1_USER_AGENT,
-    },
+    headers,
     next: {
       revalidate: options.revalidate ?? OPENF1_DEFAULT_REVALIDATE,
       tags: uniqueTags(options.tags),
@@ -667,7 +694,8 @@ export async function getSeasonSnapshot(
   const completedRaces = races.filter(
     (r) => !CANCELLED_MEETING_KEYS.has(r.meeting_key) && getSessionStatus(r) === "completed",
   );
-  const winnerResults = await runPool(completedRaces, 5, async (race) => {
+  const conc = getOpenF1MaxConcurrency();
+  const winnerResults = await runPool(completedRaces, conc, async (race) => {
     const results = await fetchOpenF1<SessionResult>(
       "session_result",
       { session_key: race.session_key, position: 1 },
@@ -717,22 +745,32 @@ export async function getSeasonSnapshot(
       if (m) prevCircuitToSession.set(m.circuit_key, r);
     }
 
-    const firstPrevRace = prevRaces[0];
-    let prevDriverMap = new Map<number, Driver>();
-    if (firstPrevRace) {
-      const prevDrivers = await fetchOpenF1<Driver>(
-        "drivers",
-        { session_key: firstPrevRace.session_key },
-        { tags: [`season-${prevYear}`], allowFailure: true },
-      );
-      prevDriverMap = new Map(prevDrivers.map((d) => [d.driver_number, d]));
-    }
-
     const matchedUpcoming = upcomingCircuitKeys.filter((u) =>
       prevCircuitToSession.has(u.circuitKey),
     );
 
-    const resultsBatch = await runPool(matchedUpcoming, 5, async (u) => {
+    const uniquePrevSessionKeys = [
+      ...new Set(
+        matchedUpcoming.map((u) => prevCircuitToSession.get(u.circuitKey)!.session_key),
+      ),
+    ];
+
+    const driverListsBySession = await runPool(uniquePrevSessionKeys, conc, async (sessionKey) =>
+      fetchOpenF1<Driver>(
+        "drivers",
+        { session_key: sessionKey },
+        { tags: [`season-${prevYear}`], allowFailure: true },
+      ),
+    );
+
+    const prevDriverMap = new Map<number, Driver>();
+    for (const drivers of driverListsBySession) {
+      for (const d of drivers) {
+        prevDriverMap.set(d.driver_number, d);
+      }
+    }
+
+    const resultsBatch = await runPool(matchedUpcoming, conc, async (u) => {
       const prevRace = prevCircuitToSession.get(u.circuitKey)!;
       const results = await fetchOpenF1<SessionResult>(
         "session_result",
@@ -744,10 +782,11 @@ export async function getSeasonSnapshot(
 
     for (const { meetingKey, results } of resultsBatch) {
       const top3 = results
-        .filter((r) => r.position != null && r.position <= 3)
-        .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+        .map((r) => ({ r, pos: sessionResultPosition(r) }))
+        .filter((x): x is { r: SessionResult; pos: number } => x.pos != null && x.pos >= 1 && x.pos <= 3)
+        .sort((a, b) => a.pos - b.pos)
         .slice(0, 3)
-        .map((r) => prevDriverMap.get(r.driver_number)?.full_name ?? null)
+        .map((x) => prevDriverMap.get(x.r.driver_number)?.full_name ?? null)
         .filter((name): name is string => name !== null);
       if (top3.length > 0) {
         lastSeasonTop3Map.set(meetingKey, top3);
