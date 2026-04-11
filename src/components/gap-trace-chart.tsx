@@ -76,8 +76,13 @@ export function GapTraceChart({ gaps, color = "var(--accent)" }: GapTraceChartPr
     return (
       <div className="panel rounded-[28px] p-5">
         <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Gap to leader</p>
-        <div className="mt-6 rounded-[18px] border border-dashed border-white/10 px-4 py-12 text-center text-sm text-white/35">
-          Not enough interval samples available.
+        <div className="mt-6 rounded-[18px] border border-dashed border-white/10 px-4 py-10 text-center text-sm text-white/35">
+          <p>Not enough interval samples to draw a trace.</p>
+          <p className="mt-2 text-xs leading-relaxed text-white/28">
+            OpenF1 sometimes omits <code className="text-white/45">intervals</code> for back-markers,
+            retired cars, or drivers outside the timing loop — try another finisher if you need this
+            chart.
+          </p>
         </div>
       </div>
     );

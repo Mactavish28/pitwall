@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { Eye, EyeOff, MapPin } from "lucide-react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { MapPin } from "lucide-react";
 
 type LocationSample = {
   x: number;
@@ -42,26 +42,31 @@ function normalize(samples: LocationSample[]): { nx: number; ny: number }[] {
   }));
 }
 
+function buildApiUrl(sessionKey: number, driverNumber: number, dateStart: string, dateEnd: string) {
+  return `https://api.openf1.org/v1/location?session_key=${sessionKey}&driver_number=${driverNumber}&date>=${encodeURIComponent(dateStart)}&date<=${encodeURIComponent(dateEnd)}`;
+}
+
 export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }: TrackMapProps) {
-  const [visible, setVisible] = useState(false);
   const [data, setData] = useState<LocationSample[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setData(null);
+    setLoading(false);
+    setError(false);
+  }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
   const loadTrack = useCallback(async () => {
     if (!lapDateStart || !lapDateEnd) return;
     setLoading(true);
     setError(false);
     try {
-      const params = new URLSearchParams({
-        session_key: String(sessionKey),
-        driver_number: String(driverNumber),
-        "date>=": lapDateStart,
-        "date<=": lapDateEnd,
-      });
-      const res = await fetch(`https://api.openf1.org/v1/location?${params}`);
+      const url = buildApiUrl(sessionKey, driverNumber, lapDateStart, lapDateEnd);
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw: LocationSample[] = await res.json();
+      if (raw.length === 0) throw new Error("No data");
       setData(downsample(raw, 200));
     } catch {
       setError(true);
@@ -70,12 +75,6 @@ export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }:
     }
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
-  const handleToggle = useCallback(() => {
-    const next = !visible;
-    setVisible(next);
-    if (next && !data && !loading) loadTrack();
-  }, [visible, data, loading, loadTrack]);
-
   const points = useMemo(() => (data ? normalize(data) : []), [data]);
 
   if (!lapDateStart || !lapDateEnd) return null;
@@ -83,80 +82,94 @@ export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }:
   const padding = 20;
   const size = 200;
   const svgSize = size + padding * 2;
-
   const polylinePoints = points.map((p) => `${padding + p.nx * size},${padding + (1 - p.ny) * size}`).join(" ");
 
   return (
     <div className="panel rounded-[28px] p-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <MapPin className="size-3.5 text-[var(--accent-cool)]" />
-          <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Circuit trace</p>
-        </div>
-        <button
-          onClick={handleToggle}
-          className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/4 px-3 py-1 text-xs text-white/50 transition hover:text-white/70"
-        >
-          {visible ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-          {visible ? "Hide" : "Show"}
-        </button>
+      <div className="flex items-center gap-2">
+        <MapPin className="size-4 text-[var(--accent-cool)]" />
+        <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Circuit trace</p>
       </div>
+      <p className="mt-2 text-sm text-white/55">GPS outline of the fastest lap.</p>
 
-      {visible && (
+      {!data && !loading && !error && (
+        <button
+          onClick={loadTrack}
+          className="mt-4 w-full rounded-[16px] border border-[var(--accent-cool)]/20 bg-[var(--accent-cool)]/6 py-3 text-sm font-medium text-[var(--accent-cool)] transition hover:bg-[var(--accent-cool)]/12"
+        >
+          Load circuit trace
+        </button>
+      )}
+
+      {loading && (
+        <div className="mt-4 flex items-center justify-center py-8">
+          <div className="size-5 animate-spin rounded-full border-2 border-white/15 border-t-[var(--accent)]" />
+          <span className="ml-3 text-sm text-white/40">Fetching GPS data…</span>
+        </div>
+      )}
+
+      {error && (
         <div className="mt-4">
-          {loading && (
-            <div className="flex items-center justify-center py-8">
-              <div className="size-5 animate-spin rounded-full border-2 border-white/15 border-t-[var(--accent)]" />
-              <span className="ml-3 text-sm text-white/40">Fetching location data…</span>
-            </div>
-          )}
+          <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-6 text-center text-sm text-white/38">
+            GPS data unavailable for this lap.
+          </div>
+          <button
+            onClick={loadTrack}
+            className="mt-3 w-full rounded-[16px] border border-white/10 bg-white/4 py-2.5 text-xs text-white/50 transition hover:text-white/70"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
-          {error && (
-            <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
-              Failed to load location data.
-            </div>
-          )}
-
-          {!loading && !error && points.length > 5 && (
-            <>
-              <div className="flex justify-center">
-                <svg
-                  viewBox={`0 0 ${svgSize} ${svgSize}`}
-                  width="100%"
-                  style={{ maxWidth: 280, aspectRatio: "1" }}
-                >
-                  <polyline
-                    points={polylinePoints}
-                    fill="none"
-                    stroke="var(--accent)"
+      {!loading && !error && points.length > 5 && (
+        <div className="mt-4">
+          <div className="flex justify-center">
+            <svg
+              viewBox={`0 0 ${svgSize} ${svgSize}`}
+              width="100%"
+              style={{ maxWidth: 260, aspectRatio: "1" }}
+            >
+              <polyline
+                points={polylinePoints}
+                fill="none"
+                stroke="var(--accent)"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.8"
+              />
+              {points.length > 0 && (
+                <>
+                  <circle
+                    cx={padding + points[0].nx * size}
+                    cy={padding + (1 - points[0].ny) * size}
+                    r="5"
+                    fill="var(--accent)"
+                    stroke="rgba(5,6,11,0.8)"
                     strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    opacity="0.7"
                   />
-                  {points.length > 0 && (
-                    <circle
-                      cx={padding + points[0].nx * size}
-                      cy={padding + (1 - points[0].ny) * size}
-                      r="4"
-                      fill="var(--accent)"
-                      stroke="rgba(5,6,11,0.8)"
-                      strokeWidth="2"
-                    />
-                  )}
-                </svg>
-              </div>
-              <p className="mt-2 text-center text-[10px] text-white/25">
-                GPS coordinates are approximate. Circuit shape may vary.
-              </p>
-            </>
-          )}
+                  <text
+                    x={padding + points[0].nx * size + 8}
+                    y={padding + (1 - points[0].ny) * size + 3}
+                    fill="rgba(255,255,255,0.4)"
+                    fontSize="8"
+                  >
+                    S/F
+                  </text>
+                </>
+              )}
+            </svg>
+          </div>
+          <p className="mt-2 text-center text-[10px] text-white/25">
+            Coordinates are approximate — shape may vary from actual layout.
+          </p>
+        </div>
+      )}
 
-          {!loading && !error && data && points.length <= 5 && (
-            <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
-              Not enough GPS samples for this lap.
-            </div>
-          )}
+      {!loading && !error && data && points.length <= 5 && (
+        <div className="mt-4 rounded-[18px] border border-dashed border-white/10 px-4 py-6 text-center text-sm text-white/38">
+          Not enough GPS samples for this lap.
         </div>
       )}
     </div>

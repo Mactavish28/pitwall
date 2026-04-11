@@ -29,6 +29,9 @@ import {
   type TeamStandingView,
 } from "@/lib/openf1";
 
+/** Vercel / OpenF1: homepage runs many upstream fetches — avoid 10s hobby timeout. */
+export const maxDuration = 60;
+
 function getAccent(teamColour?: string | null) {
   return teamColour ? `#${teamColour}` : "var(--accent)";
 }
@@ -427,13 +430,13 @@ export default async function Home() {
                   {
                     label: "Next race",
                     value:
-                      snapshot.nextMeeting?.meeting.meeting_name ?? "Season complete",
+                      snapshot.nextMeeting?.meeting.meeting_name ?? "TBC",
                     sub: snapshot.nextMeeting
                       ? formatMeetingWindow(
                           snapshot.nextMeeting.meeting.date_start,
                           snapshot.nextMeeting.meeting.date_end,
                         )
-                      : "No later race scheduled",
+                      : "No upcoming round (cancelled weekends skipped)",
                     bg: "rgba(122,245,255,0.05)",
                     border: "rgba(122,245,255,0.12)",
                   },
@@ -568,11 +571,17 @@ export default async function Home() {
           <MetricCard
             label="Fastest pit stop"
             value={formatDuration(
-              snapshot.fastestPitStop?.stop_duration ??
-                snapshot.fastestPitStop?.lane_duration,
+              snapshot.fastestPitStop.stop?.stop_duration ??
+                snapshot.fastestPitStop.stop?.lane_duration,
               2,
             )}
-            detail="Best stationary service from the featured race."
+            detail={
+              snapshot.fastestPitStop.stop && snapshot.fastestPitStop.driver
+                ? `${snapshot.fastestPitStop.driver.team_name} · ${snapshot.fastestPitStop.driver.full_name} · lap ${snapshot.fastestPitStop.stop.lap_number} · ${snapshot.featuredMeeting.meeting_name}`
+                : snapshot.fastestPitStop.stop
+                  ? `Lap ${snapshot.fastestPitStop.stop.lap_number} · ${snapshot.featuredMeeting.meeting_name}`
+                  : "No timed pit stops in the featured race."
+            }
             color="var(--accent-cool)"
           />
           <MetricCard

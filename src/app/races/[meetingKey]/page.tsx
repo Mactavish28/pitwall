@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   ArrowLeft,
   CloudRainWind,
@@ -20,7 +20,6 @@ import { OvertakeTimeline } from "@/components/overtake-timeline";
 import { SectorTimeTable } from "@/components/sector-time-table";
 import { SessionStandings } from "@/components/session-standings";
 import { SpeedTrapChart } from "@/components/speed-trap-chart";
-import { TeamRadioPlayer } from "@/components/team-radio-player";
 import { TrackMap } from "@/components/track-map";
 import { WindRose } from "@/components/wind-rose";
 import {
@@ -30,13 +29,14 @@ import {
   formatMeetingWindow,
   formatPositionChange,
   formatTemperature,
-  formatUtcDateTime,
   formatWindSpeed,
 } from "@/lib/format";
 import {
   getRaceDetailSnapshot,
   type Driver,
   type EnrichedResult,
+  type Lap,
+  type PositionSample,
   type Stint,
 } from "@/lib/openf1";
 
@@ -44,6 +44,9 @@ type RacePageProps = {
   params: Promise<{ meetingKey: string }>;
   searchParams: Promise<{ driver?: string }>;
 };
+
+/** Vercel: race page aggregates many OpenF1 calls — allow time on cold start. */
+export const maxDuration = 60;
 
 function getAccent(teamColour?: string | null) {
   return teamColour ? `#${teamColour}` : "var(--accent)";
@@ -94,6 +97,31 @@ function downsample<T>(items: T[], maxPoints: number) {
     const sourceIndex = Math.round((index * (items.length - 1)) / (maxPoints - 1));
     return items[sourceIndex];
   });
+}
+
+function buildPositionTracePoints(
+  positions: PositionSample[],
+  laps: Lap[],
+  maxPoints: number,
+) {
+  const sortedP = [...positions].sort((a, b) => a.date.localeCompare(b.date));
+  const sortedLaps = [...laps].sort((a, b) => a.lap_number - b.lap_number);
+  if (sortedP.length < 2) return [];
+
+  function lapForDate(date: string): number {
+    if (sortedLaps.length === 0) return 1;
+    let lap = sortedLaps[0].lap_number;
+    for (const l of sortedLaps) {
+      if (l.date_start <= date) lap = l.lap_number;
+    }
+    return lap;
+  }
+
+  const sampled = downsample(sortedP, maxPoints);
+  return sampled.map((sample) => ({
+    label: `L${lapForDate(sample.date)}`,
+    value: sample.position,
+  }));
 }
 
 function ResultRow({ entry }: { entry: EnrichedResult }) {
@@ -228,24 +256,48 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
   const detail = await getRaceDetailSnapshot(meetingKey, selectedDriverNumber);
   if (!detail) notFound();
 
+  if (
+    selectedDriverNumber != null &&
+    detail.selectedDriverNumber !== null &&
+    selectedDriverNumber !== detail.selectedDriverNumber
+  ) {
+    redirect(`/races/${meetingKey}?driver=${detail.selectedDriverNumber}`);
+  }
+
   const selectedResult =
     detail.resultTable.find((e) => e.driver_number === detail.selectedDriverNumber) ?? null;
   const selectedPitStops = detail.pitStops.filter(
     (s) => s.driver_number === detail.selectedDriverNumber,
   );
+
+  const fullRaceLaps = Math.max(
+    1,
+    ...detail.resultTable.map((e) => e.number_of_laps ?? 0),
+    detail.selectedDriverLaps.at(-1)?.lap_number ?? 0,
+  );
+
+  const driverCompletedLaps =
+    selectedResult?.number_of_laps ??
+    detail.selectedDriverLaps.filter((l) => !l.is_pit_out_lap).at(-1)?.lap_number ??
+    detail.selectedDriverLaps.at(-1)?.lap_number ??
+    0;
+
+  const stintDenominatorLaps = Math.max(
+    driverCompletedLaps || 1,
+    ...detail.selectedDriverStints.map((s) => s.lap_end),
+    1,
+  );
+
   const lapPoints = detail.selectedDriverLaps
     .filter((lap) => !lap.is_pit_out_lap && typeof lap.lap_duration === "number")
     .map((lap) => ({ label: `L${lap.lap_number}`, value: lap.lap_duration }));
-  const positionPoints = downsample(detail.selectedDriverPositions, 32).map((sample) => ({
-    label: sample.date.slice(11, 16),
-    value: sample.position,
-  }));
+  const positionPoints = buildPositionTracePoints(
+    detail.selectedDriverPositions,
+    detail.selectedDriverLaps,
+    32,
+  );
   const bestLap =
     lapPoints.length > 0 ? Math.min(...lapPoints.map((l) => l.value ?? Infinity)) : null;
-  const totalRaceLaps =
-    detail.resultTable[0]?.number_of_laps ??
-    detail.selectedDriverLaps.at(-1)?.lap_number ??
-    0;
   const finalGap =
     detail.selectedDriverGaps.at(-1)?.gap_to_leader ?? selectedResult?.gap_to_leader ?? null;
 
@@ -255,18 +307,26 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
 
   const fastestLapStart = fastestLap?.date_start ?? null;
   const fastestLapEnd = (() => {
-    if (!fastestLap) return null;
+    if (!fastestLap?.date_start) return null;
     const nextLap = detail.selectedDriverLaps.find(
       (l) => l.lap_number === fastestLap.lap_number + 1,
     );
-    return nextLap?.date_start ?? null;
+    let endMs: number;
+    if (nextLap?.date_start) {
+      endMs = new Date(nextLap.date_start).getTime();
+    } else {
+      const lapSeconds =
+        typeof fastestLap.lap_duration === "number" && fastestLap.lap_duration > 0
+          ? fastestLap.lap_duration
+          : 95;
+      endMs = new Date(fastestLap.date_start).getTime() + (lapSeconds + 25) * 1000;
+    }
+    const sessionEnd = new Date(detail.race.date_end).getTime();
+    return new Date(Math.min(endMs, sessionEnd)).toISOString();
   })();
 
-  const driverMapForRadio = new Map(
-    detail.drivers.map((d) => [d.driver_number, { full_name: d.full_name, team_colour: d.team_colour }]),
-  );
-
   const driverAccent = getAccent(detail.selectedDriver?.team_colour);
+  const selectedDriverName = detail.selectedDriver?.full_name ?? `Car ${detail.selectedDriverNumber}`;
 
   return (
     <div className="flex-1">
@@ -311,7 +371,10 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
                   {formatMeetingWindow(detail.meeting.date_start, detail.meeting.date_end)}
                 </p>
 
-                <div className="mt-5 flex flex-wrap gap-2">
+                <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/32">
+                  Race-wide · whole field
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
                   <span className="chip text-sm text-white/65">
                     <Trophy className="size-3.5 text-[var(--accent-gold)]" />
                     {detail.resultTable[0]?.driver?.name_acronym ?? "TBD"} won
@@ -354,7 +417,7 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
           </div>
         </header>
 
-        {/* ── Driver Spotlight ──────────────────────────────────── */}
+        {/* ── Driver Spotlight (selected driver only) ───────────── */}
         <section className="panel relative overflow-hidden rounded-[30px] p-5 lg:p-6">
           <div
             className="absolute inset-x-0 top-0 h-1"
@@ -366,24 +429,39 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
           />
 
           <div className="relative">
-            <div className="flex items-center gap-4">
-              <DriverAvatar driver={detail.selectedDriver} size={68} />
-              <div>
-                <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">
-                  Driver spotlight
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-center gap-4">
+                <DriverAvatar driver={detail.selectedDriver} size={68} />
+                <div>
+                  <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">
+                    Driver spotlight
+                  </p>
+                  <h2 className="mt-2 text-xl font-semibold text-white">
+                    {detail.selectedDriver?.full_name ?? `Car ${detail.selectedDriverNumber}`}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-white/45">
+                    {detail.selectedDriver?.team_name ?? "OpenF1"} ·{" "}
+                    <span style={{ color: driverAccent }}>#{detail.selectedDriverNumber}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="shrink-0 rounded-[16px] border border-[var(--accent-cool)]/25 bg-[var(--accent-cool)]/6 px-4 py-2.5 sm:max-w-xs">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--accent-cool)]">
+                  This driver only
                 </p>
-                <h2 className="mt-2 text-xl font-semibold text-white">
-                  {detail.selectedDriver?.full_name ?? `Car ${detail.selectedDriverNumber}`}
-                </h2>
-                <p className="mt-0.5 text-sm text-white/45">
-                  {detail.selectedDriver?.team_name ?? "OpenF1"} ·{" "}
-                  <span style={{ color: driverAccent }}>#{detail.selectedDriverNumber}</span>
+                <p className="mt-1 text-xs leading-relaxed text-white/50">
+                  Every chart, gap trace, sector table, speed trap, tyre strip, and telemetry load below
+                  uses <span className="text-white/75">{selectedDriverName}</span>&apos;s data — not the
+                  race winner or the full grid.
                 </p>
               </div>
             </div>
 
             {/* Key stats */}
-            <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <p className="telemetry-kicker mt-6 text-[10px] text-white/30">
+              Selected driver · classification row
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 {
                   label: "Finish",
@@ -427,56 +505,76 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
             {/* Tyre strategy + pit visits */}
             <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_auto]">
               <div>
-                <p className="telemetry-kicker text-[10px] text-white/35">Tyre strategy</p>
+                <p className="telemetry-kicker text-[10px] text-white/35">
+                  Tyre strategy · this driver&apos;s stints
+                </p>
                 <div className="mt-3">
-                  <StrategyStrip stints={detail.selectedDriverStints} totalLaps={totalRaceLaps} />
+                  <StrategyStrip stints={detail.selectedDriverStints} totalLaps={stintDenominatorLaps} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-1">
                 <div className="rounded-[18px] border border-white/6 p-3" style={{ background: "rgba(255,255,255,0.025)" }}>
                   <p className="text-[10px] uppercase tracking-[0.2em] text-white/32">Pit visits</p>
+                  <p className="mt-0.5 text-[9px] text-white/25">This driver only</p>
                   <p className="display-font mt-2 text-4xl text-white">{selectedPitStops.length}</p>
                 </div>
                 <div className="rounded-[18px] border border-white/6 p-3" style={{ background: "rgba(255,255,255,0.025)" }}>
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-white/32">Laps</p>
-                  <p className="display-font mt-2 text-4xl text-white">{totalRaceLaps}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-white/32">Laps completed</p>
+                  <p className="display-font mt-2 text-4xl text-white">
+                    {driverCompletedLaps > 0 ? driverCompletedLaps : "—"}
+                  </p>
+                  {driverCompletedLaps > 0 && driverCompletedLaps !== fullRaceLaps ? (
+                    <p className="mt-1 text-[10px] text-white/30">of {fullRaceLaps} flag laps</p>
+                  ) : null}
                 </div>
               </div>
             </div>
 
             {/* Charts inside spotlight */}
-            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+            <p className="telemetry-kicker mt-6 text-[10px] text-white/30">
+              On-track telemetry · same driver
+            </p>
+            <div className="mt-2 grid gap-6 xl:grid-cols-2">
               <LineChart
                 color={driverAccent}
                 formatType="duration"
                 points={lapPoints}
-                subtitle="Timed flying laps — pit-out laps excluded."
+                subtitle={`${selectedDriverName} — lap time each flying lap (pit-out laps removed).`}
                 title="Lap pace trace"
               />
               <LineChart
+                chartCaption="Y-axis is finishing position (P1 at top when inverted). X-axis is race lap when each sample was taken — not every lap has a point."
                 color="var(--accent-cool)"
                 formatType="position"
                 invert
                 points={positionPoints}
-                subtitle="Position samples across the race distance."
+                subtitle={`${selectedDriverName} — where they ran in the pack as the race unfolded.`}
                 title="Position trace"
               />
             </div>
 
             {/* Gap to leader */}
-            <div className="mt-6">
+            <p className="telemetry-kicker mt-6 text-[10px] text-white/30">
+              Intervals · gap to race leader for this driver
+            </p>
+            <div className="mt-2">
               <GapTraceChart gaps={detail.selectedDriverGaps} color={driverAccent} />
             </div>
 
             {/* Telemetry + Track map */}
-            <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_auto]">
+            <p className="telemetry-kicker mt-6 text-[10px] text-white/30">
+              Fastest lap window · car data &amp; GPS for this driver
+            </p>
+            <div className="mt-2 grid gap-6 xl:grid-cols-[1fr_auto]">
               <LapTelemetryPanel
+                key={`tele-${detail.selectedDriverNumber}`}
                 sessionKey={detail.race.session_key}
                 driverNumber={detail.selectedDriverNumber ?? 0}
                 lapDateStart={fastestLapStart}
                 lapDateEnd={fastestLapEnd}
               />
               <TrackMap
+                key={`track-${detail.selectedDriverNumber}`}
                 sessionKey={detail.race.session_key}
                 driverNumber={detail.selectedDriverNumber ?? 0}
                 lapDateStart={fastestLapStart}
@@ -486,22 +584,30 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
           </div>
         </section>
 
-        {/* ── Sector splits + Speed traps ──────────────────────── */}
+        {/* ── Sector splits + Speed traps (selected driver) ───── */}
         <section className="grid gap-6 xl:grid-cols-2">
+          <p className="col-span-full -mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/32">
+            Selected driver · sectors &amp; speeds
+          </p>
           <SectorTimeTable
             laps={detail.selectedDriverLaps}
             stints={detail.selectedDriverStints}
+            driverName={selectedDriverName}
           />
           <SpeedTrapChart laps={detail.selectedDriverLaps} />
         </section>
 
-        {/* ── Results + Pit log ─────────────────────────────────── */}
+        {/* ── Results + Pit log (full field) ────────────────────── */}
         <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+          <p className="col-span-full -mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/32">
+            Full field · every car in this race
+          </p>
           <div className="panel flex flex-col rounded-[30px] p-5 lg:p-6" style={{ maxHeight: 640 }}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Classification</p>
                 <h2 className="mt-2 text-2xl font-semibold text-white">Race finish order</h2>
+                <p className="mt-1 text-xs text-white/38">Official result — not filtered by spotlight.</p>
               </div>
               <div className="rounded-full border border-white/10 bg-white/4 px-4 py-2 text-sm text-white/50">
                 {detail.resultTable.length} classified
@@ -520,6 +626,7 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
               <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Pit lane ledger</p>
             </div>
             <h2 className="mt-2 text-2xl font-semibold text-white">Stop timeline</h2>
+            <p className="mt-1 text-xs text-white/38">All pit stops in the race, every driver.</p>
             <div className="mt-5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {detail.pitStops.length > 0 ? (
                 detail.pitStops.map((stop) => {
@@ -559,13 +666,18 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
           </div>
         </section>
 
-        {/* ── Overtake timeline ──────────────────────────────────── */}
-        <OvertakeTimeline overtakes={detail.enrichedOvertakes} totalLaps={totalRaceLaps} />
+        {/* ── Overtake timeline (full field) ───────────────────── */}
+        <div className="-mb-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/32">
+            Full field · every overtake in this race
+          </p>
+        </div>
+        <OvertakeTimeline overtakes={detail.enrichedOvertakes} totalLaps={fullRaceLaps} />
 
-        {/* ── Team radio ───────────────────────────────────────── */}
-        <TeamRadioPlayer clips={detail.selectedDriverRadio} driverMap={driverMapForRadio} />
-
-        {/* ── Race control + Weather ─────────────────────────────── */}
+        {/* ── Race control + Weather (session-wide) ─────────────── */}
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/32">
+          Session-wide · same for every driver
+        </p>
         <section className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
           {/* Race control - scrollable */}
           <div className="panel rounded-[30px] p-5 lg:p-6">
@@ -574,6 +686,7 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
               <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Race control</p>
             </div>
             <h2 className="mt-2 text-2xl font-semibold text-white">Steward & flag timeline</h2>
+            <p className="mt-1 text-xs text-white/38">Race control feed for the whole session.</p>
             <div className="mt-5 max-h-[420px] space-y-2 overflow-y-auto pr-1">
               {detail.raceControl.length > 0 ? (
                 detail.raceControl.map((message) => (
@@ -611,6 +724,7 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
                 <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Conditions</p>
               </div>
               <h2 className="mt-2 text-2xl font-semibold text-white">Weather profile</h2>
+              <p className="mt-1 text-xs text-white/38">Conditions across the race session.</p>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <WeatherStat
                   label="Track temp"
