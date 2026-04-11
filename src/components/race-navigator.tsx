@@ -14,6 +14,7 @@ type RaceOption = {
 
 type RaceNavigatorProps = {
   races: RaceOption[];
+  /** Initial dropdown value (e.g. featured meeting on home). Not the active route. */
   currentMeetingKey: number;
 };
 
@@ -27,7 +28,6 @@ export function RaceNavigator({
 
   const goToRace = () => {
     if (opening) return;
-    if (String(currentMeetingKey) === selected) return;
     setOpening(true);
     router.push(`/races/${selected}`);
   };
@@ -72,7 +72,7 @@ export function RaceNavigator({
           type="button"
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-black transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-60"
           onClick={goToRace}
-          disabled={opening || String(currentMeetingKey) === selected}
+          disabled={opening}
           aria-busy={opening}
         >
           {opening ? (
