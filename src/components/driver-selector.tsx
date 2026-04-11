@@ -30,7 +30,8 @@ export function DriverSelector({
             Driver Spotlight
           </p>
           <p className="mt-1 text-sm text-white/65">
-            Switch the telemetry panel to any finisher.
+            Choose who to analyse — spotlight, charts, and sectors switch to that driver. Race
+            result, pit list, overtakes, and weather stay full-field.
           </p>
         </div>
         <RadioTower className="size-5 text-[var(--accent)]" />
@@ -42,7 +43,7 @@ export function DriverSelector({
         onChange={(event) => {
           const value = event.target.value;
 
-          router.replace(
+          router.push(
             value ? `/races/${meetingKey}?driver=${value}` : `/races/${meetingKey}`,
           );
         }}

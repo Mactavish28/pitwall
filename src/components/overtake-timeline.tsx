@@ -51,6 +51,12 @@ export function OvertakeTimeline({ overtakes, totalLaps }: OvertakeTimelineProps
         </span>
       </div>
 
+      <p className="mt-3 text-sm leading-relaxed text-white/45">
+        Every bar is one race lap. Taller bars mean more on-track passes that lap. The table lists who
+        passed whom and the position after the move. Lap numbers come from race-control timing when
+        available.
+      </p>
+
       {/* Race strip */}
       <div className="mt-5 flex items-end gap-px" style={{ height: 48 }}>
         {Array.from({ length: laps }, (_, i) => {

@@ -22,6 +22,8 @@ type FormatType = "duration" | "position" | "number";
 type LineChartProps = {
   title: string;
   subtitle: string;
+  /** Extra explanation below the chart (e.g. how to read axes). */
+  chartCaption?: string;
   color?: string;
   points: ChartPoint[];
   invert?: boolean;
@@ -82,6 +84,7 @@ function CustomTooltip({
 export function LineChart({
   title,
   subtitle,
+  chartCaption,
   color = "var(--accent)",
   points,
   invert = false,
@@ -250,6 +253,12 @@ export function LineChart({
           </span>
         </div>
       </div>
+
+      {chartCaption ? (
+        <p className="mt-3 rounded-[12px] border border-white/6 bg-white/[0.02] px-3 py-2.5 text-[11px] leading-relaxed text-white/40">
+          {chartCaption}
+        </p>
+      ) : null}
     </div>
   );
 }

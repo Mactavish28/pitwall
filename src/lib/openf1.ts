@@ -273,6 +273,11 @@ export interface TeamStandingView extends ChampionshipTeam {
   pointsDelta: number;
 }
 
+export interface FastestPitStopInfo {
+  stop: PitStop | null;
+  driver: Driver | null;
+}
+
 export interface SeasonSnapshot {
   seasonYear: number;
   meetings: MeetingCard[];
@@ -290,7 +295,7 @@ export interface SeasonSnapshot {
   teamStandings: TeamStandingView[];
   selectedDrivers: Driver[];
   totalOvertakes: number;
-  fastestPitStop: PitStop | null;
+  fastestPitStop: FastestPitStopInfo;
 }
 
 export interface RaceDetailSnapshot {
@@ -340,6 +345,9 @@ function buildUrl(endpoint: string, params: QueryParams = {}) {
   return url;
 }
 
+const OPENF1_USER_AGENT =
+  "Pitwall/1.0 (+https://github.com/Mactavish28/pitwall; contact: openf1 client)";
+
 async function fetchOpenF1<T>(
   endpoint: string,
   params: QueryParams = {},
@@ -347,6 +355,10 @@ async function fetchOpenF1<T>(
   attempt = 0,
 ) {
   const response = await fetch(buildUrl(endpoint, params), {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": OPENF1_USER_AGENT,
+    },
     next: {
       revalidate: options.revalidate ?? OPENF1_DEFAULT_REVALIDATE,
       tags: uniqueTags(options.tags),
@@ -357,12 +369,13 @@ async function fetchOpenF1<T>(
     return [] as T[];
   }
 
-  if (response.status === 429 && attempt < 1) {
+  const max429Attempts = 4;
+  if (response.status === 429 && attempt < max429Attempts) {
     const retryAfterHeader = Number(response.headers.get("retry-after"));
     const retryDelayMs =
       Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
         ? retryAfterHeader * 1000
-        : 1200;
+        : 1500 + attempt * 800;
 
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
 
@@ -824,8 +837,12 @@ export async function getSeasonSnapshot(
     drivers.slice(0, 3);
   const nextMeeting =
     meetingCards.find(
-      (meeting) => new Date(meeting.race.date_start).getTime() > Date.now(),
+      (meeting) =>
+        meeting.status !== "cancelled" &&
+        new Date(meeting.race.date_start).getTime() > Date.now(),
     ) ?? null;
+
+  const fastestStop = getFastestPitStop(pitStops);
 
   return {
     seasonYear: year,
@@ -844,7 +861,10 @@ export async function getSeasonSnapshot(
     teamStandings: buildTeamStandings(teamStandingsRaw, driverMap),
     selectedDrivers,
     totalOvertakes: overtakes.length,
-    fastestPitStop: getFastestPitStop(pitStops),
+    fastestPitStop: {
+      stop: fastestStop,
+      driver: fastestStop ? driverMap.get(fastestStop.driver_number) ?? null : null,
+    },
   };
 }
 
@@ -918,8 +938,11 @@ export async function getRaceDetailSnapshot(
 
   const driverMap = buildDriverMap(drivers);
   const resultTable = enrichResults(resultTableRaw, startingGrid, driverMap);
+  const driverInResults =
+    selectedDriverNumber != null &&
+    resultTable.some((row) => row.driver_number === selectedDriverNumber);
   const resolvedDriverNumber =
-    selectedDriverNumber ??
+    (driverInResults ? selectedDriverNumber : undefined) ??
     resultTable[0]?.driver_number ??
     drivers[0]?.driver_number ??
     null;
@@ -961,19 +984,26 @@ export async function getRaceDetailSnapshot(
     ]);
   }
 
+  const sortedRc = sortByDate(raceControl);
+  const rcWithLap = sortedRc.filter((rc) => rc.lap_number != null);
+
   const enrichedOvertakes: EnrichedOvertake[] = overtakes.map((ov) => {
     const overtaking = driverMap.get(ov.overtaking_driver_number);
     const overtaken = driverMap.get(ov.overtaken_driver_number);
-    const rcMatch = raceControl.find(
-      (rc) => rc.date <= ov.date && rc.lap_number != null,
-    );
+    let lapNum: number | null = null;
+    for (let i = rcWithLap.length - 1; i >= 0; i--) {
+      if (rcWithLap[i].date <= ov.date) {
+        lapNum = rcWithLap[i].lap_number!;
+        break;
+      }
+    }
     return {
       ...ov,
       overtakingDriverName: overtaking?.full_name ?? `Car ${ov.overtaking_driver_number}`,
       overtakenDriverName: overtaken?.full_name ?? `Car ${ov.overtaken_driver_number}`,
       overtakingTeamColour: overtaking?.team_colour ?? null,
       overtakenTeamColour: overtaken?.team_colour ?? null,
-      lap_number: rcMatch?.lap_number ?? null,
+      lap_number: lapNum,
     };
   });
 

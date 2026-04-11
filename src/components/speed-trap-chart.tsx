@@ -88,7 +88,14 @@ export function SpeedTrapChart({ laps }: SpeedTrapChartProps) {
         <div>
           <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Speed traps</p>
           <p className="mt-2 text-sm text-white/55">
-            I1, I2 & speed trap readings per lap — tyre deg and fuel effect visible over distance.
+            OpenF1 logs three GPS speed samples per lap: two intermediates (I1, I2) at different
+            track sectors plus the main speed-trap beam (ST). Compare laps to see slipstream, tyre
+            drop-off, or lift-and-coast.
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-white/35">
+            <span className="text-[var(--accent)]">I1</span> · intermediate 1 &nbsp;
+            <span className="text-[var(--accent-cool)]">I2</span> · intermediate 2 &nbsp;
+            <span style={{ color: COLORS.st }}>ST</span> · official speed trap
           </p>
         </div>
         <div className="shrink-0 text-right">
