@@ -5,16 +5,16 @@ const OPENF1_DEFAULT_REVALIDATE = 60 * 60;
 const MIN_F1_YEAR = 2023;
 
 /**
- * OpenF1 does not publish numeric free-tier rate limits; unauthenticated traffic is
- * throttled (often 429). Default to a small pool; authenticated users get higher limits
- * per https://openf1.org/auth.html — set OPENF1_ACCESS_TOKEN (Bearer) on Vercel if needed.
- * Tune parallelism with OPENF1_MAX_CONCURRENCY (integer 1–6, default 2).
+ * Free-tier OpenF1 (unauthenticated): 3 requests / second, 30 / minute.
+ * Enforced in-process before each HTTP call; skipped when OPENF1_ACCESS_TOKEN is set
+ * (assume higher limits) or OPENF1_RATE_LIMIT_DISABLED=1. Optional overrides:
+ * OPENF1_MAX_RPS, OPENF1_MAX_RPM. Parallel fan-out: OPENF1_MAX_CONCURRENCY (default 3).
  */
 function getOpenF1MaxConcurrency() {
   const raw = process.env.OPENF1_MAX_CONCURRENCY;
   const n = raw ? Number.parseInt(raw, 10) : NaN;
   if (Number.isFinite(n) && n >= 1 && n <= 6) return n;
-  return 2;
+  return 3;
 }
 
 type Primitive = string | number | boolean;
@@ -392,6 +392,85 @@ function buildUrl(endpoint: string, params: QueryParams = {}) {
 const OPENF1_USER_AGENT =
   "Pitwall/1.0 (+https://github.com/Mactavish28/pitwall; contact: openf1 client)";
 
+const openF1RequestStartTimes: number[] = [];
+let openF1RateLimitChain: Promise<void> = Promise.resolve();
+
+function parseOpenF1RateInt(
+  envName: string,
+  fallback: number,
+  min: number,
+  max: number,
+) {
+  const raw = process.env[envName];
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n) && n >= min && n <= max) return n;
+  return fallback;
+}
+
+function getOpenF1FreeTierLimits() {
+  return {
+    maxPerSecond: parseOpenF1RateInt("OPENF1_MAX_RPS", 3, 1, 20),
+    maxPerMinute: parseOpenF1RateInt("OPENF1_MAX_RPM", 30, 1, 600),
+  };
+}
+
+function shouldApplyOpenF1FreeRateLimit() {
+  if (process.env.OPENF1_RATE_LIMIT_DISABLED === "1") return false;
+  if (process.env.OPENF1_ACCESS_TOKEN?.trim()) return false;
+  return true;
+}
+
+function pruneOpenF1RequestStarts(now: number) {
+  const cutoff = now - 60_000;
+  while (openF1RequestStartTimes.length > 0 && openF1RequestStartTimes[0]! < cutoff) {
+    openF1RequestStartTimes.shift();
+  }
+}
+
+async function acquireOpenF1SlotLocked(): Promise<void> {
+  const { maxPerSecond, maxPerMinute } = getOpenF1FreeTierLimits();
+
+  for (;;) {
+    const now = Date.now();
+    pruneOpenF1RequestStarts(now);
+
+    const startedInLastSecond = openF1RequestStartTimes.filter((t) => t > now - 1000).length;
+
+    if (
+      openF1RequestStartTimes.length < maxPerMinute &&
+      startedInLastSecond < maxPerSecond
+    ) {
+      openF1RequestStartTimes.push(Date.now());
+      return;
+    }
+
+    let waitMs = 25;
+    if (openF1RequestStartTimes.length >= maxPerMinute) {
+      waitMs = Math.max(waitMs, openF1RequestStartTimes[0]! + 60_000 - now + 1);
+    }
+    if (startedInLastSecond >= maxPerSecond) {
+      const inSecondSorted = openF1RequestStartTimes
+        .filter((t) => t > now - 1000)
+        .sort((a, b) => a - b);
+      const oldestInSecond = inSecondSorted[0]!;
+      waitMs = Math.max(waitMs, oldestInSecond + 1000 - now + 1);
+    }
+
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.min(waitMs, 250)),
+    );
+  }
+}
+
+async function acquireOpenF1SlotForRequest(): Promise<void> {
+  if (!shouldApplyOpenF1FreeRateLimit()) {
+    return;
+  }
+  const run = openF1RateLimitChain.then(() => acquireOpenF1SlotLocked());
+  openF1RateLimitChain = run.catch(() => {});
+  await run;
+}
+
 async function fetchOpenF1<T>(
   endpoint: string,
   params: QueryParams = {},
@@ -406,6 +485,8 @@ async function fetchOpenF1<T>(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
+
+  await acquireOpenF1SlotForRequest();
 
   const response = await fetch(buildUrl(endpoint, params), {
     headers,
