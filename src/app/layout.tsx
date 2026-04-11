@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Outfit } from "next/font/google";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 
 import { Nav } from "@/components/nav";
 
@@ -44,6 +45,7 @@ export default function RootLayout({
       <body className="min-h-full bg-background text-foreground flex flex-col">
         <Nav />
         {children}
+        <Analytics />
       </body>
     </html>
   );
