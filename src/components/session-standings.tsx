@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import type { Session } from "@/lib/openf1";
 import { formatUtcDateTime } from "@/lib/format";
+import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
 
 type SessionResult = {
   position: number | null;
@@ -40,10 +41,10 @@ export function SessionStandings({ session, isRace }: SessionStandingsProps) {
 
     try {
       const [resData, driverData] = await Promise.all([
-        fetch(`https://api.openf1.org/v1/session_result?session_key=${session.session_key}`)
+        fetch(openF1ProxyUrl(`session_result?session_key=${session.session_key}`))
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
-        fetch(`https://api.openf1.org/v1/drivers?session_key=${session.session_key}`)
+        fetch(openF1ProxyUrl(`drivers?session_key=${session.session_key}`))
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
       ]);

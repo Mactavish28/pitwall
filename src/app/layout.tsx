@@ -41,8 +41,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${displayFont.variable} ${bodyFont.variable} ${monoFont.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full bg-background text-foreground flex flex-col">
+      <body
+        className="min-h-full bg-background text-foreground flex flex-col"
+        suppressHydrationWarning
+      >
         <Nav />
         {children}
         <Analytics />

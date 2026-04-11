@@ -3,6 +3,8 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { MapPin } from "lucide-react";
 
+import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
+
 type LocationSample = {
   x: number;
   y: number;
@@ -43,7 +45,14 @@ function normalize(samples: LocationSample[]): { nx: number; ny: number }[] {
 }
 
 function buildApiUrl(sessionKey: number, driverNumber: number, dateStart: string, dateEnd: string) {
-  return `https://api.openf1.org/v1/location?session_key=${sessionKey}&driver_number=${driverNumber}&date>=${encodeURIComponent(dateStart)}&date<=${encodeURIComponent(dateEnd)}`;
+  // Proxy uses `date_start` / `date_end` so Next.js URL parsing is stable; the route rewrites to OpenF1 `date>=` / `date<=`.
+  const qs = [
+    `session_key=${sessionKey}`,
+    `driver_number=${driverNumber}`,
+    `date_start=${encodeURIComponent(dateStart)}`,
+    `date_end=${encodeURIComponent(dateEnd)}`,
+  ].join("&");
+  return openF1ProxyUrl(`location?${qs}`);
 }
 
 export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }: TrackMapProps) {

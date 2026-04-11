@@ -1,8 +1,26 @@
 import "server-only";
 
+import {
+  acquireOpenF1SlotForRequest,
+  getOpenF1RequestHeaders,
+} from "@/lib/openf1-rate-limit";
+
 const OPENF1_BASE_URL = "https://api.openf1.org/v1";
 const OPENF1_DEFAULT_REVALIDATE = 60 * 60;
 const MIN_F1_YEAR = 2023;
+
+/**
+ * Free-tier OpenF1 (unauthenticated): 3 requests / second, 30 / minute.
+ * Enforced in-process before each HTTP call; skipped when OPENF1_ACCESS_TOKEN is set
+ * (assume higher limits) or OPENF1_RATE_LIMIT_DISABLED=1. Optional overrides:
+ * OPENF1_MAX_RPS, OPENF1_MAX_RPM. Parallel fan-out: OPENF1_MAX_CONCURRENCY (default 3).
+ */
+function getOpenF1MaxConcurrency() {
+  const raw = process.env.OPENF1_MAX_CONCURRENCY;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n) && n >= 1 && n <= 6) return n;
+  return 3;
+}
 
 type Primitive = string | number | boolean;
 type QueryValue = Primitive | Primitive[] | null | undefined;
@@ -76,6 +94,14 @@ export interface SessionResult {
   meeting_key: number;
   position: number | null;
   session_key: number;
+}
+
+function sessionResultPosition(entry: SessionResult): number | null {
+  const p = entry.position;
+  if (p == null) return null;
+  if (typeof p === "number" && Number.isFinite(p)) return p;
+  const n = Number(p);
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface StartingGridEntry {
@@ -323,6 +349,29 @@ function uniqueTags(tags?: string[]) {
   return Array.from(new Set(["openf1", ...(tags ?? [])]));
 }
 
+/** Limits parallel OpenF1 calls so serverless hosts (many reqs from one IP) avoid 429 storms. */
+async function runPool<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  async function spawn() {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]!, index);
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => spawn()));
+  return results;
+}
+
 function buildUrl(endpoint: string, params: QueryParams = {}) {
   const url = new URL(`${OPENF1_BASE_URL}/${endpoint}`);
 
@@ -345,20 +394,18 @@ function buildUrl(endpoint: string, params: QueryParams = {}) {
   return url;
 }
 
-const OPENF1_USER_AGENT =
-  "Pitwall/1.0 (+https://github.com/Mactavish28/pitwall; contact: openf1 client)";
-
 async function fetchOpenF1<T>(
   endpoint: string,
   params: QueryParams = {},
   options: CacheOptions = {},
   attempt = 0,
 ) {
+  const headers = getOpenF1RequestHeaders();
+
+  await acquireOpenF1SlotForRequest();
+
   const response = await fetch(buildUrl(endpoint, params), {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": OPENF1_USER_AGENT,
-    },
+    headers,
     next: {
       revalidate: options.revalidate ?? OPENF1_DEFAULT_REVALIDATE,
       tags: uniqueTags(options.tags),
@@ -588,6 +635,8 @@ async function resolveSeasonData(preferredYear = new Date().getUTCFullYear()) {
     new Set([preferredYear, preferredYear - 1, 2026, 2025, 2024, 2023]),
   ).filter((year) => year >= MIN_F1_YEAR);
 
+  // One sessions request at a time: parallel year discovery bursts OpenF1 (429) and
+  // this path does not use allowFailure, so the homepage would 500.
   for (const year of candidateYears) {
     const races = sortByDateStart(
       await fetchOpenF1<Session>(
@@ -642,27 +691,25 @@ export async function getSeasonSnapshot(
   const completedRaces = races.filter(
     (r) => !CANCELLED_MEETING_KEYS.has(r.meeting_key) && getSessionStatus(r) === "completed",
   );
-  const winnerResults = await Promise.all(
-    completedRaces.map((race) =>
-      fetchOpenF1<SessionResult>(
-        "session_result",
-        { session_key: race.session_key, position: 1 },
-        { tags: [`season-${year}`], allowFailure: true },
-      ).then(async (results) => {
-        const winner = results[0];
-        if (!winner) return { meetingKey: race.meeting_key, name: null };
-        const drivers = await fetchOpenF1<Driver>(
-          "drivers",
-          { session_key: race.session_key, driver_number: winner.driver_number },
-          { tags: [`season-${year}`], allowFailure: true },
-        );
-        return {
-          meetingKey: race.meeting_key,
-          name: drivers[0]?.full_name ?? null,
-        };
-      }),
-    ),
-  );
+  const conc = getOpenF1MaxConcurrency();
+  const winnerResults = await runPool(completedRaces, conc, async (race) => {
+    const results = await fetchOpenF1<SessionResult>(
+      "session_result",
+      { session_key: race.session_key, position: 1 },
+      { tags: [`season-${year}`], allowFailure: true },
+    );
+    const winner = results[0];
+    if (!winner) return { meetingKey: race.meeting_key, name: null };
+    const drivers = await fetchOpenF1<Driver>(
+      "drivers",
+      { session_key: race.session_key, driver_number: winner.driver_number },
+      { tags: [`season-${year}`], allowFailure: true },
+    );
+    return {
+      meetingKey: race.meeting_key,
+      name: drivers[0]?.full_name ?? null,
+    };
+  });
   const winnerMap = new Map(winnerResults.map((w) => [w.meetingKey, w.name]));
 
   const upcomingCircuitKeys = races
@@ -695,38 +742,48 @@ export async function getSeasonSnapshot(
       if (m) prevCircuitToSession.set(m.circuit_key, r);
     }
 
-    const firstPrevRace = prevRaces[0];
-    let prevDriverMap = new Map<number, Driver>();
-    if (firstPrevRace) {
-      const prevDrivers = await fetchOpenF1<Driver>(
-        "drivers",
-        { session_key: firstPrevRace.session_key },
-        { tags: [`season-${prevYear}`], allowFailure: true },
-      );
-      prevDriverMap = new Map(prevDrivers.map((d) => [d.driver_number, d]));
-    }
-
     const matchedUpcoming = upcomingCircuitKeys.filter((u) =>
       prevCircuitToSession.has(u.circuitKey),
     );
 
-    const resultsBatch = await Promise.all(
-      matchedUpcoming.map((u) => {
-        const prevRace = prevCircuitToSession.get(u.circuitKey)!;
-        return fetchOpenF1<SessionResult>(
-          "session_result",
-          { session_key: prevRace.session_key },
-          { tags: [`season-${prevYear}`], allowFailure: true },
-        ).then((results) => ({ meetingKey: u.meetingKey, results }));
-      }),
+    const uniquePrevSessionKeys = [
+      ...new Set(
+        matchedUpcoming.map((u) => prevCircuitToSession.get(u.circuitKey)!.session_key),
+      ),
+    ];
+
+    const driverListsBySession = await runPool(uniquePrevSessionKeys, conc, async (sessionKey) =>
+      fetchOpenF1<Driver>(
+        "drivers",
+        { session_key: sessionKey },
+        { tags: [`season-${prevYear}`], allowFailure: true },
+      ),
     );
+
+    const prevDriverMap = new Map<number, Driver>();
+    for (const drivers of driverListsBySession) {
+      for (const d of drivers) {
+        prevDriverMap.set(d.driver_number, d);
+      }
+    }
+
+    const resultsBatch = await runPool(matchedUpcoming, conc, async (u) => {
+      const prevRace = prevCircuitToSession.get(u.circuitKey)!;
+      const results = await fetchOpenF1<SessionResult>(
+        "session_result",
+        { session_key: prevRace.session_key },
+        { tags: [`season-${prevYear}`], allowFailure: true },
+      );
+      return { meetingKey: u.meetingKey, results };
+    });
 
     for (const { meetingKey, results } of resultsBatch) {
       const top3 = results
-        .filter((r) => r.position != null && r.position <= 3)
-        .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+        .map((r) => ({ r, pos: sessionResultPosition(r) }))
+        .filter((x): x is { r: SessionResult; pos: number } => x.pos != null && x.pos >= 1 && x.pos <= 3)
+        .sort((a, b) => a.pos - b.pos)
         .slice(0, 3)
-        .map((r) => prevDriverMap.get(r.driver_number)?.full_name ?? null)
+        .map((x) => prevDriverMap.get(x.r.driver_number)?.full_name ?? null)
         .filter((name): name is string => name !== null);
       if (top3.length > 0) {
         lastSeasonTop3Map.set(meetingKey, top3);
