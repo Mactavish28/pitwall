@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   AreaChart,
   Area,
@@ -12,6 +12,7 @@ import {
 import { Activity } from "lucide-react";
 
 import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
+import { InlineLoader } from "@/components/inline-loader";
 
 type CarDataSample = {
   date: string;
@@ -113,15 +114,20 @@ export function LapTelemetryPanel({
   const [rawData, setRawData] = useState<CarDataSample[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const loadInFlightRef = useRef(false);
 
   useEffect(() => {
     setRawData(null);
     setLoading(false);
     setError(false);
+    loadInFlightRef.current = false;
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
   const loadTelemetry = useCallback(async () => {
     if (!lapDateStart || !lapDateEnd) return;
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    setRawData(null);
     setLoading(true);
     setError(false);
     try {
@@ -134,6 +140,7 @@ export function LapTelemetryPanel({
     } catch {
       setError(true);
     } finally {
+      loadInFlightRef.current = false;
       setLoading(false);
     }
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
@@ -155,7 +162,11 @@ export function LapTelemetryPanel({
     return null;
   }
 
-  if (!rawData && !loading && !error) {
+  const hasChart = Boolean(rawData && rawData.length >= 5);
+  const showInsufficient =
+    Boolean(rawData && rawData.length > 0 && rawData.length < 5 && !error);
+
+  if (!hasChart) {
     return (
       <div className="panel rounded-[28px] p-5">
         <div className="flex items-center gap-2">
@@ -165,47 +176,49 @@ export function LapTelemetryPanel({
         <p className="mt-2 text-sm text-white/55">
           Speed, throttle, brake &amp; gear trace for the fastest lap.
         </p>
-        <button
-          onClick={loadTelemetry}
-          className="mt-4 w-full rounded-[16px] border border-[var(--accent)]/20 bg-[var(--accent)]/6 py-3 text-sm font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/12"
-        >
-          Load telemetry
-        </button>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="panel rounded-[28px] p-5">
-        <div className="flex items-center gap-2">
-          <Activity className="size-4 text-[var(--accent)]" />
-          <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Lap telemetry</p>
-        </div>
-        <div className="mt-6 flex items-center justify-center py-8">
-          <div className="size-5 animate-spin rounded-full border-2 border-white/15 border-t-[var(--accent)]" />
-          <span className="ml-3 text-sm text-white/40">Fetching car data…</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !rawData || rawData.length < 5) {
-    return (
-      <div className="panel rounded-[28px] p-5">
-        <div className="flex items-center gap-2">
-          <Activity className="size-4 text-[var(--accent)]" />
-          <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Lap telemetry</p>
-        </div>
-        <div className="mt-5 rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
-          {error ? "Telemetry data unavailable for this lap." : "Not enough telemetry samples."}
-        </div>
-        <button
-          onClick={loadTelemetry}
-          className="mt-3 w-full rounded-[16px] border border-white/10 bg-white/4 py-2.5 text-xs text-white/50 transition hover:text-white/70"
-        >
-          Retry
-        </button>
+        {loading ? (
+          <InlineLoader label="Loading telemetry…" className="mt-2 rounded-[16px] border border-white/6 bg-white/[0.02]" />
+        ) : null}
+        {!loading && error ? (
+          <>
+            <div className="mt-5 rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
+              Telemetry data unavailable for this lap.
+            </div>
+            <button
+              type="button"
+              onClick={loadTelemetry}
+              disabled={loading}
+              className="mt-3 w-full rounded-[16px] border border-white/10 bg-white/4 py-2.5 text-xs text-white/50 transition hover:text-white/70 disabled:pointer-events-none disabled:opacity-40"
+            >
+              Retry
+            </button>
+          </>
+        ) : null}
+        {!loading && !error && showInsufficient ? (
+          <>
+            <div className="mt-5 rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
+              Not enough telemetry samples.
+            </div>
+            <button
+              type="button"
+              onClick={loadTelemetry}
+              disabled={loading}
+              className="mt-3 w-full rounded-[16px] border border-white/10 bg-white/4 py-2.5 text-xs text-white/50 transition hover:text-white/70 disabled:pointer-events-none disabled:opacity-40"
+            >
+              Retry
+            </button>
+          </>
+        ) : null}
+        {!loading && !error && !showInsufficient ? (
+          <button
+            type="button"
+            onClick={loadTelemetry}
+            disabled={loading}
+            className="mt-4 w-full rounded-[16px] border border-[var(--accent)]/20 bg-[var(--accent)]/6 py-3 text-sm font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/12 disabled:pointer-events-none disabled:opacity-40"
+          >
+            Load telemetry
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -221,7 +234,7 @@ export function LapTelemetryPanel({
             <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">Lap telemetry</p>
           </div>
           <p className="mt-2 text-sm text-white/55">
-            Fastest lap — {rawData.length} samples (~3.7 Hz)
+            Fastest lap — {rawData!.length} samples (~3.7 Hz)
           </p>
         </div>
         <div className="text-right">

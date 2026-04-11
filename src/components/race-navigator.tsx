@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, MapPinned } from "lucide-react";
+import { ChevronRight, Loader2, MapPinned } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { MeetingStatus } from "@/lib/openf1";
 
@@ -14,6 +14,7 @@ type RaceOption = {
 
 type RaceNavigatorProps = {
   races: RaceOption[];
+  /** Initial dropdown value (e.g. featured meeting on home). Not the active route. */
   currentMeetingKey: number;
 };
 
@@ -23,6 +24,13 @@ export function RaceNavigator({
 }: RaceNavigatorProps) {
   const router = useRouter();
   const [selected, setSelected] = useState(String(currentMeetingKey));
+  const [opening, setOpening] = useState(false);
+
+  const goToRace = () => {
+    if (opening) return;
+    setOpening(true);
+    router.push(`/races/${selected}`);
+  };
 
   return (
     <div className="panel rounded-[24px] p-4">
@@ -42,6 +50,7 @@ export function RaceNavigator({
           aria-label="Select a race weekend"
           className="select-shell min-w-0 flex-1 truncate text-sm"
           value={selected}
+          disabled={opening}
           onChange={(e) => setSelected(e.target.value)}
         >
           {races.map((race) => {
@@ -60,12 +69,23 @@ export function RaceNavigator({
           })}
         </select>
         <button
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-black transition hover:brightness-110 active:scale-95"
-          onClick={() => router.push(`/races/${selected}`)}
           type="button"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-black transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-60"
+          onClick={goToRace}
+          disabled={opening}
+          aria-busy={opening}
         >
-          Open
-          <ChevronRight className="size-4" />
+          {opening ? (
+            <>
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              Opening…
+            </>
+          ) : (
+            <>
+              Open
+              <ChevronRight className="size-4" aria-hidden />
+            </>
+          )}
         </button>
       </div>
     </div>
