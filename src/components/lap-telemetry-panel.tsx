@@ -11,6 +11,8 @@ import {
 } from "recharts";
 import { Activity } from "lucide-react";
 
+import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
+
 type CarDataSample = {
   date: string;
   speed: number;
@@ -82,7 +84,13 @@ function TelemetryTooltip({ active, payload, label }: { active?: boolean; payloa
 }
 
 function buildApiUrl(sessionKey: number, driverNumber: number, dateStart: string, dateEnd: string) {
-  return `https://api.openf1.org/v1/car_data?session_key=${sessionKey}&driver_number=${driverNumber}&date>=${encodeURIComponent(dateStart)}&date<=${encodeURIComponent(dateEnd)}`;
+  const q = new URLSearchParams({
+    session_key: String(sessionKey),
+    driver_number: String(driverNumber),
+    "date>=": dateStart,
+    "date<=": dateEnd,
+  });
+  return openF1ProxyUrl(`car_data?${q.toString()}`);
 }
 
 function InsightTile({ label, value, hint }: { label: string; value: string; hint: string }) {

@@ -3,6 +3,8 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { MapPin } from "lucide-react";
 
+import { openF1ProxyUrl } from "@/lib/openf1-client-proxy";
+
 type LocationSample = {
   x: number;
   y: number;
@@ -43,7 +45,13 @@ function normalize(samples: LocationSample[]): { nx: number; ny: number }[] {
 }
 
 function buildApiUrl(sessionKey: number, driverNumber: number, dateStart: string, dateEnd: string) {
-  return `https://api.openf1.org/v1/location?session_key=${sessionKey}&driver_number=${driverNumber}&date>=${encodeURIComponent(dateStart)}&date<=${encodeURIComponent(dateEnd)}`;
+  const q = new URLSearchParams({
+    session_key: String(sessionKey),
+    driver_number: String(driverNumber),
+    "date>=": dateStart,
+    "date<=": dateEnd,
+  });
+  return openF1ProxyUrl(`location?${q.toString()}`);
 }
 
 export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }: TrackMapProps) {
