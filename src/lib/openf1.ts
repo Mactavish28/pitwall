@@ -323,6 +323,29 @@ function uniqueTags(tags?: string[]) {
   return Array.from(new Set(["openf1", ...(tags ?? [])]));
 }
 
+/** Limits parallel OpenF1 calls so serverless hosts (many reqs from one IP) avoid 429 storms. */
+async function runPool<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  async function spawn() {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]!, index);
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => spawn()));
+  return results;
+}
+
 function buildUrl(endpoint: string, params: QueryParams = {}) {
   const url = new URL(`${OPENF1_BASE_URL}/${endpoint}`);
 
@@ -588,15 +611,17 @@ async function resolveSeasonData(preferredYear = new Date().getUTCFullYear()) {
     new Set([preferredYear, preferredYear - 1, 2026, 2025, 2024, 2023]),
   ).filter((year) => year >= MIN_F1_YEAR);
 
-  for (const year of candidateYears) {
-    const races = sortByDateStart(
-      await fetchOpenF1<Session>(
+  const sessionsPerYear = await Promise.all(
+    candidateYears.map((year) =>
+      fetchOpenF1<Session>(
         "sessions",
         { year, session_name: "Race" },
         { revalidate: 60 * 60 * 6, tags: [`season-${year}`] },
-      ),
-    );
+      ).then((rows) => ({ year, races: sortByDateStart(rows) })),
+    ),
+  );
 
+  for (const { year, races } of sessionsPerYear) {
     if (races.length === 0) {
       continue;
     }
@@ -642,27 +667,24 @@ export async function getSeasonSnapshot(
   const completedRaces = races.filter(
     (r) => !CANCELLED_MEETING_KEYS.has(r.meeting_key) && getSessionStatus(r) === "completed",
   );
-  const winnerResults = await Promise.all(
-    completedRaces.map((race) =>
-      fetchOpenF1<SessionResult>(
-        "session_result",
-        { session_key: race.session_key, position: 1 },
-        { tags: [`season-${year}`], allowFailure: true },
-      ).then(async (results) => {
-        const winner = results[0];
-        if (!winner) return { meetingKey: race.meeting_key, name: null };
-        const drivers = await fetchOpenF1<Driver>(
-          "drivers",
-          { session_key: race.session_key, driver_number: winner.driver_number },
-          { tags: [`season-${year}`], allowFailure: true },
-        );
-        return {
-          meetingKey: race.meeting_key,
-          name: drivers[0]?.full_name ?? null,
-        };
-      }),
-    ),
-  );
+  const winnerResults = await runPool(completedRaces, 5, async (race) => {
+    const results = await fetchOpenF1<SessionResult>(
+      "session_result",
+      { session_key: race.session_key, position: 1 },
+      { tags: [`season-${year}`], allowFailure: true },
+    );
+    const winner = results[0];
+    if (!winner) return { meetingKey: race.meeting_key, name: null };
+    const drivers = await fetchOpenF1<Driver>(
+      "drivers",
+      { session_key: race.session_key, driver_number: winner.driver_number },
+      { tags: [`season-${year}`], allowFailure: true },
+    );
+    return {
+      meetingKey: race.meeting_key,
+      name: drivers[0]?.full_name ?? null,
+    };
+  });
   const winnerMap = new Map(winnerResults.map((w) => [w.meetingKey, w.name]));
 
   const upcomingCircuitKeys = races
@@ -710,16 +732,15 @@ export async function getSeasonSnapshot(
       prevCircuitToSession.has(u.circuitKey),
     );
 
-    const resultsBatch = await Promise.all(
-      matchedUpcoming.map((u) => {
-        const prevRace = prevCircuitToSession.get(u.circuitKey)!;
-        return fetchOpenF1<SessionResult>(
-          "session_result",
-          { session_key: prevRace.session_key },
-          { tags: [`season-${prevYear}`], allowFailure: true },
-        ).then((results) => ({ meetingKey: u.meetingKey, results }));
-      }),
-    );
+    const resultsBatch = await runPool(matchedUpcoming, 5, async (u) => {
+      const prevRace = prevCircuitToSession.get(u.circuitKey)!;
+      const results = await fetchOpenF1<SessionResult>(
+        "session_result",
+        { session_key: prevRace.session_key },
+        { tags: [`season-${prevYear}`], allowFailure: true },
+      );
+      return { meetingKey: u.meetingKey, results };
+    });
 
     for (const { meetingKey, results } of resultsBatch) {
       const top3 = results
