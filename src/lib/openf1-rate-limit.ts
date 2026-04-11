@@ -22,7 +22,13 @@ function parseOpenF1RateInt(
 function getOpenF1FreeTierLimits() {
   return {
     maxPerSecond: parseOpenF1RateInt("OPENF1_MAX_RPS", 3, 1, 20),
-    maxPerMinute: parseOpenF1RateInt("OPENF1_MAX_RPM", 30, 1, 600),
+    /**
+     * 0 = do not enforce a rolling per-minute cap (still enforces maxPerSecond).
+     * OpenF1 documents ~30/min for anonymous use; the Pitwall homepage issues many calls
+     * and strict 30/min can exceed Vercel's 60s serverless limit → 504. Set OPENF1_MAX_RPM=30
+     * for strict compliance (lighter pages / token) or use OPENF1_ACCESS_TOKEN.
+     */
+    maxPerMinute: parseOpenF1RateInt("OPENF1_MAX_RPM", 0, 0, 600),
   };
 }
 
@@ -35,8 +41,8 @@ function shouldApplyOpenF1FreeRateLimit() {
   return true;
 }
 
-function pruneOpenF1RequestStarts(now: number) {
-  const cutoff = now - 60_000;
+function pruneOpenF1RequestStarts(now: number, maxAgeMs: number) {
+  const cutoff = now - maxAgeMs;
   while (openF1RequestStartTimes.length > 0 && openF1RequestStartTimes[0]! < cutoff) {
     openF1RequestStartTimes.shift();
   }
@@ -44,23 +50,24 @@ function pruneOpenF1RequestStarts(now: number) {
 
 async function acquireOpenF1SlotLocked(): Promise<void> {
   const { maxPerSecond, maxPerMinute } = getOpenF1FreeTierLimits();
+  const pruneWindowMs = maxPerMinute > 0 ? 60_000 : 5_000;
 
   for (;;) {
     const now = Date.now();
-    pruneOpenF1RequestStarts(now);
+    pruneOpenF1RequestStarts(now, pruneWindowMs);
 
     const startedInLastSecond = openF1RequestStartTimes.filter((t) => t > now - 1000).length;
 
-    if (
-      openF1RequestStartTimes.length < maxPerMinute &&
-      startedInLastSecond < maxPerSecond
-    ) {
+    const minuteOk =
+      maxPerMinute <= 0 || openF1RequestStartTimes.length < maxPerMinute;
+
+    if (minuteOk && startedInLastSecond < maxPerSecond) {
       openF1RequestStartTimes.push(Date.now());
       return;
     }
 
     let waitMs = 25;
-    if (openF1RequestStartTimes.length >= maxPerMinute) {
+    if (maxPerMinute > 0 && openF1RequestStartTimes.length >= maxPerMinute) {
       waitMs = Math.max(waitMs, openF1RequestStartTimes[0]! + 60_000 - now + 1);
     }
     if (startedInLastSecond >= maxPerSecond) {
