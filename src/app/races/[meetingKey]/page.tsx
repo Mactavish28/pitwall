@@ -21,6 +21,7 @@ import { SectorTimeTable } from "@/components/sector-time-table";
 import { SessionStandings } from "@/components/session-standings";
 import { SpeedTrapChart } from "@/components/speed-trap-chart";
 import { TrackMap } from "@/components/track-map";
+import { ThrottledArtifactLoader } from "@/components/throttled-artifact-loader";
 import { WindRose } from "@/components/wind-rose";
 import {
   formatDuration,
@@ -558,7 +559,14 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
               Intervals · gap to race leader for this driver
             </p>
             <div className="mt-2">
-              <GapTraceChart gaps={detail.selectedDriverGaps} color={driverAccent} />
+              {detail.selectedDriverGaps.length > 0 ? (
+                <GapTraceChart gaps={detail.selectedDriverGaps} color={driverAccent} />
+              ) : (
+                <ThrottledArtifactLoader
+                  hasData={false}
+                  label="Fetching gap trace from OpenF1..."
+                />
+              )}
             </div>
 
             {/* Telemetry + Track map */}
@@ -658,9 +666,10 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
                   );
                 })
               ) : (
-                <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
-                  Pit lane data is not available for this meeting yet.
-                </div>
+                <ThrottledArtifactLoader
+                  hasData={false}
+                  label="Fetching pit lane data from OpenF1..."
+                />
               )}
             </div>
           </div>
@@ -672,7 +681,14 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
             Full field · every overtake in this race
           </p>
         </div>
-        <OvertakeTimeline overtakes={detail.enrichedOvertakes} totalLaps={fullRaceLaps} />
+        {detail.enrichedOvertakes.length > 0 ? (
+          <OvertakeTimeline overtakes={detail.enrichedOvertakes} totalLaps={fullRaceLaps} />
+        ) : (
+          <ThrottledArtifactLoader
+            hasData={false}
+            label="Fetching overtake timeline from OpenF1..."
+          />
+        )}
 
         {/* ── Race control + Weather (session-wide) ─────────────── */}
         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/32">
@@ -709,9 +725,10 @@ export default async function RacePage({ params, searchParams }: RacePageProps) 
                   </div>
                 ))
               ) : (
-                <div className="rounded-[18px] border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/38">
-                  No race control messages available.
-                </div>
+                <ThrottledArtifactLoader
+                  hasData={false}
+                  label="Fetching race control feed from OpenF1..."
+                />
               )}
             </div>
           </div>

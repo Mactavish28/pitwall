@@ -114,12 +114,14 @@ export function LapTelemetryPanel({
   const [rawData, setRawData] = useState<CarDataSample[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const loadInFlightRef = useRef(false);
 
   useEffect(() => {
     setRawData(null);
     setLoading(false);
     setError(false);
+    setAttempt(0);
     loadInFlightRef.current = false;
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
@@ -144,6 +146,23 @@ export function LapTelemetryPanel({
       setLoading(false);
     }
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
+
+  useEffect(() => {
+    if (!lapDateStart || !lapDateEnd) return;
+    if (rawData && rawData.length >= 5) return;
+    if (attempt >= 4) return;
+    if (loadInFlightRef.current) return;
+
+    const timer = setTimeout(
+      () => {
+        setAttempt((prev) => prev + 1);
+        void loadTelemetry();
+      },
+      attempt === 0 ? 0 : 2200,
+    );
+
+    return () => clearTimeout(timer);
+  }, [attempt, lapDateEnd, lapDateStart, loadTelemetry, rawData]);
 
   const chartData = useMemo(() => {
     if (!rawData || rawData.length < 5) return [];
@@ -177,7 +196,7 @@ export function LapTelemetryPanel({
           Speed, throttle, brake &amp; gear trace for the fastest lap.
         </p>
         {loading ? (
-          <InlineLoader label="Loading telemetry…" className="mt-2 rounded-[16px] border border-white/6 bg-white/[0.02]" />
+          <InlineLoader label={`Loading telemetry... (${Math.max(attempt, 1)}/4)`} className="mt-2 rounded-[16px] border border-white/6 bg-white/[0.02]" />
         ) : null}
         {!loading && error ? (
           <>

@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { RadioTower } from "lucide-react";
-import { useRouter } from "next/navigation";
+
+import { InlineLoader } from "@/components/inline-loader";
 
 type DriverOption = {
   driverNumber: number;
@@ -20,10 +22,19 @@ export function DriverSelector({
   drivers,
   selectedDriverNumber,
 }: DriverSelectorProps) {
-  const router = useRouter();
+  const [isNavigating, setIsNavigating] = useState(false);
 
   return (
-    <div className="panel rounded-[24px] p-4">
+    <>
+      {isNavigating ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#05060B]/92 backdrop-blur-sm">
+          <InlineLoader
+            label="Loading selected driver..."
+            className="rounded-[18px] border border-white/10 bg-white/[0.03] px-6"
+          />
+        </div>
+      ) : null}
+      <div className="panel rounded-[24px] p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="telemetry-kicker text-xs text-[var(--accent-cool)]">
@@ -42,10 +53,11 @@ export function DriverSelector({
         value={selectedDriverNumber ? String(selectedDriverNumber) : ""}
         onChange={(event) => {
           const value = event.target.value;
-
-          router.push(
-            value ? `/races/${meetingKey}?driver=${value}` : `/races/${meetingKey}`,
-          );
+          const target = value
+            ? `/races/${meetingKey}?driver=${value}`
+            : `/races/${meetingKey}`;
+          setIsNavigating(true);
+          window.location.assign(target);
         }}
       >
         {drivers.map((driver) => (
@@ -54,6 +66,7 @@ export function DriverSelector({
           </option>
         ))}
       </select>
-    </div>
+      </div>
+    </>
   );
 }
