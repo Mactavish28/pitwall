@@ -60,12 +60,14 @@ export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }:
   const [data, setData] = useState<LocationSample[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const loadInFlightRef = useRef(false);
 
   useEffect(() => {
     setData(null);
     setLoading(false);
     setError(false);
+    setAttempt(0);
     loadInFlightRef.current = false;
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
@@ -91,6 +93,23 @@ export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }:
     }
   }, [sessionKey, driverNumber, lapDateStart, lapDateEnd]);
 
+  useEffect(() => {
+    if (!lapDateStart || !lapDateEnd) return;
+    if (data && data.length > 5) return;
+    if (attempt >= 4) return;
+    if (loadInFlightRef.current) return;
+
+    const timer = setTimeout(
+      () => {
+        setAttempt((prev) => prev + 1);
+        void loadTrack();
+      },
+      attempt === 0 ? 0 : 2200,
+    );
+
+    return () => clearTimeout(timer);
+  }, [attempt, data, lapDateEnd, lapDateStart, loadTrack]);
+
   const points = useMemo(() => (data ? normalize(data) : []), [data]);
 
   if (!lapDateStart || !lapDateEnd) return null;
@@ -113,7 +132,7 @@ export function TrackMap({ sessionKey, driverNumber, lapDateStart, lapDateEnd }:
         </div>
         <p className="mt-2 text-sm text-white/55">GPS outline of the fastest lap.</p>
         {loading ? (
-          <InlineLoader label="Loading circuit trace…" className="mt-2 rounded-[16px] border border-white/6 bg-white/[0.02]" />
+          <InlineLoader label={`Loading circuit trace... (${Math.max(attempt, 1)}/4)`} className="mt-2 rounded-[16px] border border-white/6 bg-white/[0.02]" />
         ) : null}
         {!loading && error ? (
           <>

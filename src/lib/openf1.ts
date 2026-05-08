@@ -416,6 +416,10 @@ async function fetchOpenF1<T>(
     return [] as T[];
   }
 
+  if (response.status === 429 && options.allowFailure) {
+    return [] as T[];
+  }
+
   const max429Attempts = 4;
   if (response.status === 429 && attempt < max429Attempts) {
     const retryAfterHeader = Number(response.headers.get("retry-after"));
@@ -423,7 +427,6 @@ async function fetchOpenF1<T>(
       Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
         ? retryAfterHeader * 1000
         : 1500 + attempt * 800;
-
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
 
     return fetchOpenF1(endpoint, params, options, attempt + 1);
@@ -691,8 +694,9 @@ export async function getSeasonSnapshot(
   const completedRaces = races.filter(
     (r) => !CANCELLED_MEETING_KEYS.has(r.meeting_key) && getSessionStatus(r) === "completed",
   );
+  const completedRacesForWinnerLookup = completedRaces.slice(-3);
   const conc = getOpenF1MaxConcurrency();
-  const winnerResults = await runPool(completedRaces, conc, async (race) => {
+  const winnerResults = await runPool(completedRacesForWinnerLookup, conc, async (race) => {
     const results = await fetchOpenF1<SessionResult>(
       "session_result",
       { session_key: race.session_key, position: 1 },
@@ -744,7 +748,7 @@ export async function getSeasonSnapshot(
 
     const matchedUpcoming = upcomingCircuitKeys.filter((u) =>
       prevCircuitToSession.has(u.circuitKey),
-    );
+    ).slice(0, 3);
 
     const uniquePrevSessionKeys = [
       ...new Set(
@@ -872,7 +876,6 @@ export async function getSeasonSnapshot(
       { tags, allowFailure: true },
     ),
   ]);
-
   const driverMap = buildDriverMap(drivers);
   const resultTable = enrichResults(resultTableRaw, startingGrid, driverMap);
   const pitHighlights = [...pitStops]
@@ -1040,7 +1043,6 @@ export async function getRaceDetailSnapshot(
       ),
     ]);
   }
-
   const sortedRc = sortByDate(raceControl);
   const rcWithLap = sortedRc.filter((rc) => rc.lap_number != null);
 

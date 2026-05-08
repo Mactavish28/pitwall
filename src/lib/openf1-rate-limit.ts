@@ -77,7 +77,6 @@ async function acquireOpenF1SlotLocked(): Promise<void> {
       const oldestInSecond = inSecondSorted[0]!;
       waitMs = Math.max(waitMs, oldestInSecond + 1000 - now + 1);
     }
-
     await new Promise<void>((resolve) =>
       setTimeout(resolve, Math.min(waitMs, 250)),
     );
